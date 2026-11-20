@@ -1,0 +1,58 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Unpack the game
+        run: |
+          set -e
+          ZIP=$(ls *.zip | head -n 1)
+          echo "Using $ZIP"
+          mkdir unpacked
+          unzip -q "$ZIP" -d unpacked
+          CFG=$(find unpacked -name capacitor.config.json | head -n 1)
+          if [ -n "$CFG" ]; then
+            mv "$(dirname "$CFG")" app
+          else
+            IDX=$(find unpacked -name index.html -not -path "*/node_modules/*" | head -n 1)
+            [ -n "$IDX" ] || { echo "No index.html found in $ZIP"; exit 1; }
+            mkdir -p app/www app/assets
+            cp -r "$(dirname "$IDX")"/. app/www/
+            cp app/www/icons/icon-512.png app/assets/icon-only.png 2>/dev/null || true
+            cat > app/capacitor.config.json <<'JSON'
+          {
+            "appId": "com.example.bonbonpop",
+            "appName": "Bonbon Pop",
+            "webDir": "www",
+            "backgroundColor": "#240f2e"
+          }
+          JSON
+            echo '{"name":"bonbon-pop","version":"1.0.0","private":true}' > app/package.json
+          fi
+          ls app app/www | head -30
+      - name: Build the APK
+        working-directory: app
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npm install -D @capacitor/assets
+          npx cap add android
+          perl -0pi -e 's/<activity/<activity android:screenOrientation="portrait"/' android/app/src/main/AndroidManifest.xml
+          npx capacitor-assets generate --android || echo "Icon step skipped"
+          npx cap sync android
+          cd android
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bonbon-pop-apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
